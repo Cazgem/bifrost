@@ -1,0 +1,66 @@
+#!/bin/bash
+#
+#######################
+#					  #
+#	  DIVISI LABS	  #
+#	Bifrost v 2.0.0	  #
+#					  #
+#######################
+#
+# This script is used for create virtual hosts on Apache2.
+# Created by Cazgem from https://cazgem.com
+# Feel free to modify it and Contribute at https://github.com/Cazgem/bifrost
+#
+#
+#
+### PARAMETERS ###
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+NC='\033[0m' # No Color
+SRVNAME1="1) DVLB-WS01"
+SRVADDR1=167.99.149.216
+SRVNAME2="2) Polyphony-tw01"
+SRVADDR2=207.154.201.115
+SRVNAME3="3) Minecraft Server"
+SRVADDR3="minecraft@192.168.1.226 -p 1991"
+SRVNAME4="4) DFS"
+SRVADDR4=192.168.1.74
+checkurl(){
+	if ping -q -c 1 -w 1 -a -q $2>&1 > /dev/null ; then
+		echo -e $1 "${GREEN}(Live)${NC}"
+	else
+		echo -e $1 "${RED}(Offline)${NC}"
+	fi
+}
+checkurl2(){
+	while ! ping -c1 $1 &>/dev/null
+        do echo "Ping Fail - `date`"
+	done
+}
+connect(){
+	
+	echo "================================="
+	echo "Connecting to $1 ..."
+	echo "================================="
+	ssh $1
+}
+
+while true; do
+clear;
+	echo "Bifrost Server Connection Utility"
+	echo "================================="
+	checkurl "$SRVNAME1" "$SRVADDR1"
+	checkurl "$SRVNAME2" "$SRVADDR2"
+	checkurl "$SRVNAME3" "$SRVADDR3"
+	checkurl "$SRVNAME4" "$SRVADDR4"
+	echo "q) Quit"
+    read -p "Which Server Are You Wishing To Access? " choice
+    case $choice in
+        [1]* ) clear; connect $SRVADDR1; clear;exit;;
+        [2]* ) clear; connect $SRVADDR2; clear;exit;;
+		[3]* ) clear; connect $SRVADDR3; clear;exit;;
+        [4]* ) clear; connect $SRVADDR4; clear;exit;;
+        [q]* ) clear;exit;;
+        * ) echo "Please answer yes or no.";;
+    esac
+done
