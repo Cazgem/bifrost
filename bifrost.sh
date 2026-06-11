@@ -14,7 +14,7 @@
 #
 #
 ### PARAMETERS ###
-VERSION="3.3.0"
+VERSION="3.4.0"
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
@@ -25,6 +25,9 @@ SCRIPT_PATH="$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo
 PROFILE_FILE="${BIFROST_PROFILE:-$HOME/.config/bifrost/profile.sh}"
 INSTALL_DIR="${BIFROST_INSTALL_DIR:-/usr/bin}"
 INSTALL_PATH="$INSTALL_DIR/bifrost"
+GITHUB_REPO="${BIFROST_GITHUB_REPO:-Cazgem/bifrost}"
+RELEASE_ASSET_NAME="${BIFROST_RELEASE_ASSET:-bifrost.sh}"
+CHECKSUM_ASSET_NAME="${BIFROST_CHECKSUM_ASSET:-SHA256SUMS}"
 
 # Entry-based defaults (name|host|user|port) make reordering and updates simpler.
 SERVER_ENTRIES=(
@@ -229,6 +232,169 @@ install_binary(){
 	run_as_installer cp "$SCRIPT_PATH" "$INSTALL_PATH" || return 1
 	run_as_installer chmod 755 "$INSTALL_PATH" || return 1
 }
+fetch_url(){
+	url="$1"
+
+	if command -v curl >/dev/null 2>&1; then
+		curl -fsSL "$url" 2>/dev/null
+		return $?
+	fi
+
+	if command -v wget >/dev/null 2>&1; then
+		wget -qO- "$url" 2>/dev/null
+		return $?
+	fi
+
+	echo -e "${RED}Update check failed:${NC} curl or wget is required."
+	return 1
+}
+download_url_to_file(){
+	url="$1"
+	output_file="$2"
+
+	if command -v curl >/dev/null 2>&1; then
+		curl -fsSL "$url" -o "$output_file" 2>/dev/null
+		return $?
+	fi
+
+	if command -v wget >/dev/null 2>&1; then
+		wget -qO "$output_file" "$url" 2>/dev/null
+		return $?
+	fi
+
+	echo -e "${RED}Download failed:${NC} curl or wget is required."
+	return 1
+}
+calc_sha256(){
+	file_path="$1"
+
+	if command -v sha256sum >/dev/null 2>&1; then
+		sha256sum "$file_path" | awk '{print $1}'
+		return $?
+	fi
+
+	if command -v shasum >/dev/null 2>&1; then
+		shasum -a 256 "$file_path" | awk '{print $1}'
+		return $?
+	fi
+
+	echo -e "${RED}Checksum failed:${NC} sha256sum or shasum is required."
+	return 1
+}
+normalize_version(){
+	ver="$1"
+	ver="${ver#v}"
+	ver="${ver#V}"
+	echo "$ver"
+}
+version_is_newer(){
+	current_ver="$(normalize_version "$1")"
+	latest_ver="$(normalize_version "$2")"
+
+	if [[ "$current_ver" == "$latest_ver" ]]; then
+		return 1
+	fi
+
+	highest="$(printf '%s\n%s\n' "$current_ver" "$latest_ver" | sort -V | tail -n1)"
+	[[ "$highest" == "$latest_ver" ]]
+}
+get_latest_release_tag(){
+	api_url="https://api.github.com/repos/$GITHUB_REPO/releases/latest"
+	response="$(fetch_url "$api_url")" || {
+		echo -e "${RED}Update check failed:${NC} unable to fetch latest release for $GITHUB_REPO." >&2
+		echo "Publish a GitHub Release first, then retry check-update/update." >&2
+		return 1
+	}
+
+	tag="$(printf '%s\n' "$response" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
+	if [[ -z "$tag" ]]; then
+		echo -e "${RED}Update check failed:${NC} unable to parse latest release tag." >&2
+		return 1
+	fi
+
+	echo "$tag"
+}
+verify_release_checksum(){
+	binary_file="$1"
+	checksums_file="$2"
+
+	expected_hash="$(awk -v asset="$RELEASE_ASSET_NAME" '$2 == asset {print $1}' "$checksums_file" | head -n1)"
+	if [[ -z "$expected_hash" ]]; then
+		echo -e "${RED}Verification failed:${NC} $RELEASE_ASSET_NAME not found in $CHECKSUM_ASSET_NAME."
+		return 1
+	fi
+
+	actual_hash="$(calc_sha256 "$binary_file")" || return 1
+	if [[ "$expected_hash" != "$actual_hash" ]]; then
+		echo -e "${RED}Verification failed:${NC} checksum mismatch for downloaded release."
+		return 1
+	fi
+
+	return 0
+}
+check_for_update(){
+	latest_tag="$(get_latest_release_tag)" || return 1
+	latest_ver="$(normalize_version "$latest_tag")"
+	current_ver="$(normalize_version "$VERSION")"
+
+	if version_is_newer "$current_ver" "$latest_ver"; then
+		echo "Update available: $current_ver -> $latest_ver ($latest_tag)"
+		return 0
+	fi
+
+	echo "Bifrost is up to date (version $current_ver)."
+	return 0
+}
+install_downloaded_binary(){
+	source_file="$1"
+	run_as_installer mkdir -p "$INSTALL_DIR" || return 1
+	run_as_installer cp "$source_file" "$INSTALL_PATH" || return 1
+	run_as_installer chmod 755 "$INSTALL_PATH" || return 1
+}
+update_from_github(){
+	latest_tag="$(get_latest_release_tag)" || return 1
+	latest_ver="$(normalize_version "$latest_tag")"
+	current_ver="$(normalize_version "$VERSION")"
+
+	if ! version_is_newer "$current_ver" "$latest_ver"; then
+		echo "Bifrost is already up to date (version $current_ver)."
+		return 0
+	fi
+
+	echo "Update available: $current_ver -> $latest_ver"
+
+	tmpdir="$(mktemp -d)"
+	binary_tmp="$tmpdir/$RELEASE_ASSET_NAME"
+	checksums_tmp="$tmpdir/$CHECKSUM_ASSET_NAME"
+	binary_url="https://github.com/$GITHUB_REPO/releases/download/$latest_tag/$RELEASE_ASSET_NAME"
+	checksums_url="https://github.com/$GITHUB_REPO/releases/download/$latest_tag/$CHECKSUM_ASSET_NAME"
+
+	download_url_to_file "$binary_url" "$binary_tmp" || {
+		echo -e "${RED}Update failed:${NC} unable to download $RELEASE_ASSET_NAME from release $latest_tag."
+		rm -rf "$tmpdir"
+		return 1
+	}
+
+	download_url_to_file "$checksums_url" "$checksums_tmp" || {
+		echo -e "${RED}Update failed:${NC} unable to download $CHECKSUM_ASSET_NAME from release $latest_tag."
+		rm -rf "$tmpdir"
+		return 1
+	}
+
+	verify_release_checksum "$binary_tmp" "$checksums_tmp" || {
+		rm -rf "$tmpdir"
+		return 1
+	}
+
+	install_downloaded_binary "$binary_tmp" || {
+		rm -rf "$tmpdir"
+		return 1
+	}
+
+	rm -rf "$tmpdir"
+	echo "Updated bifrost to version $latest_ver from GitHub release $latest_tag"
+	return 0
+}
 program_usage(){
 	echo "Bifrost v$VERSION"
 	echo ""
@@ -236,8 +402,9 @@ program_usage(){
 	echo "  bifrost                      Interactive menu"
 	echo "  bifrost <target>             Connect by index, alias, or server name/prefix"
 	echo "  bifrost list                 List servers and aliases"
+	echo "  bifrost check-update         Check GitHub for a newer release"
 	echo "  bifrost install              Install to $INSTALL_PATH and create profile"
-	echo "  bifrost update               Refresh installed standalone script"
+	echo "  bifrost update               Verify and install latest GitHub release"
 	echo "  bifrost help                 Show this help"
 	echo ""
 	echo "Config:"
@@ -281,8 +448,7 @@ install_bifrost(){
 	esac
 }
 update_bifrost(){
-	install_binary || exit 1
-	echo "Updated standalone copy at $INSTALL_PATH"
+	update_from_github || exit 1
 }
 program_header(){
 	echo -e "${BLUE}============================================="
@@ -427,6 +593,10 @@ if [[ -n "$1" ]]; then
 			;;
 		list|--list)
 			list_targets
+			exit
+			;;
+		check-update|--check-update)
+			check_for_update
 			exit
 			;;
 		install|--install)
