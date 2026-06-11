@@ -1,0 +1,9 @@
+# Keep local/private configuration out of Git
+profile.sh
+/profile.sh
+profile.local.sh
+/profile.local.sh
+*.local.sh
+.env
+.env.*
+secrets/
