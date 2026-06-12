@@ -3,7 +3,7 @@
 Bifrost is a small Bash utility for connecting to SSH targets from a named list.
 It keeps server definitions in a local profile, supports aliases, can install itself as a standalone command, and can update from GitHub releases.
 
-Current script version: `3.6.1`
+Current script version: `3.6.2`
 
 ## Features
 

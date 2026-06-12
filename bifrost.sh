@@ -2,7 +2,7 @@
 #
 #######################
 #	  DIVISI LABS	  #
-#	Bifrost v 3.6.1	  #
+#	Bifrost v 3.6.2	  #
 #######################
 #
 # This script is used to Connect to Virtual Hosts.
@@ -10,7 +10,7 @@
 # Contribute at https://github.com/Cazgem/bifrost
 #
 ### PARAMETERS ###
-VERSION="3.6.1"
+VERSION="3.6.2"
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
@@ -299,18 +299,18 @@ download_url_to_file(){
 
 	if command -v curl >/dev/null 2>&1; then
 		if [[ -n "$GITHUB_TOKEN" ]]; then
-			curl -fsSL -H "$ua_header" -H "$accept_header" -H "Authorization: Bearer $GITHUB_TOKEN" "$url" -o "$output_file" 2>/dev/null
+			curl -fsSL -H "$ua_header" -H "$accept_header" -H "Authorization: Bearer $GITHUB_TOKEN" "$url" -o "$output_file" 2>&1
 		else
-			curl -fsSL -H "$ua_header" -H "$accept_header" "$url" -o "$output_file" 2>/dev/null
+			curl -fsSL -H "$ua_header" -H "$accept_header" "$url" -o "$output_file" 2>&1
 		fi
 		return $?
 	fi
 
 	if command -v wget >/dev/null 2>&1; then
 		if [[ -n "$GITHUB_TOKEN" ]]; then
-			wget -qO "$output_file" --header="$ua_header" --header="$accept_header" --header="Authorization: Bearer $GITHUB_TOKEN" "$url" 2>/dev/null
+			wget -qO "$output_file" --header="$ua_header" --header="$accept_header" --header="Authorization: Bearer $GITHUB_TOKEN" "$url" 2>&1
 		else
-			wget -qO "$output_file" --header="$ua_header" --header="$accept_header" "$url" 2>/dev/null
+			wget -qO "$output_file" --header="$ua_header" --header="$accept_header" "$url" 2>&1
 		fi
 		return $?
 	fi
@@ -423,14 +423,18 @@ update_from_github(){
 	binary_url="https://github.com/$GITHUB_REPO/releases/download/$latest_tag/$RELEASE_ASSET_NAME"
 	checksums_url="https://github.com/$GITHUB_REPO/releases/download/$latest_tag/$CHECKSUM_ASSET_NAME"
 
-	download_url_to_file "$binary_url" "$binary_tmp" || {
-		echo -e "${RED}Update failed:${NC} unable to download $RELEASE_ASSET_NAME from release $latest_tag."
+	download_url_to_file "$binary_url" "$binary_tmp" >/dev/null 2>&1 || {
+		echo -e "${RED}Update failed:${NC} unable to download $RELEASE_ASSET_NAME from release $latest_tag." >&2
+		echo "  Attempted URL: $binary_url" >&2
+		echo "  Verify the release exists and has the correct assets at: https://github.com/$GITHUB_REPO/releases/tag/$latest_tag" >&2
 		rm -rf "$tmpdir"
 		return 1
 	}
 
-	download_url_to_file "$checksums_url" "$checksums_tmp" || {
-		echo -e "${RED}Update failed:${NC} unable to download $CHECKSUM_ASSET_NAME from release $latest_tag."
+	download_url_to_file "$checksums_url" "$checksums_tmp" >/dev/null 2>&1 || {
+		echo -e "${RED}Update failed:${NC} unable to download $CHECKSUM_ASSET_NAME from release $latest_tag." >&2
+		echo "  Attempted URL: $checksums_url" >&2
+		echo "  Verify the release has checksum files at: https://github.com/$GITHUB_REPO/releases/tag/$latest_tag" >&2
 		rm -rf "$tmpdir"
 		return 1
 	}
