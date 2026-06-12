@@ -1,20 +1,16 @@
 #!/bin/bash
 #
 #######################
-#					  #
 #	  DIVISI LABS	  #
-#	Bifrost v 3.3.0	  #
-#					  #
+#	Bifrost v 3.6.0	  #
 #######################
 #
 # This script is used to Connect to Virtual Hosts.
-# Created by Cazgem from https://cazgem.com
-# Feel free to modify it and Contribute at https://github.com/Cazgem/bifrost
-#
-#
+# Created by Cazgem https://cazgem.com
+# Contribute at https://github.com/Cazgem/bifrost
 #
 ### PARAMETERS ###
-VERSION="3.3.0"
+VERSION="3.6.0"
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
@@ -51,6 +47,7 @@ ALIAS_TARGET=()
 
 TOTAL=0
 LIMIT=0
+PROFILE_EXISTS=0
 
 ###################
 
@@ -68,6 +65,51 @@ find_server_index_by_name(){
 	done
 
 	return 1
+}
+find_alias_index_by_name(){
+	lookup="${1,,}"
+	for (( i=0; i<${#ALIAS_NAME[@]}; i++ )); do
+		if [[ "${ALIAS_NAME[$i],,}" == "$lookup" ]]; then
+			echo "$i"
+			return 0
+		fi
+	done
+
+	return 1
+}
+prompt_value(){
+	prompt_label="$1"
+	default_value="$2"
+	allow_empty="$3"
+
+	while true; do
+		if [[ -n "$default_value" ]]; then
+			read -r -p "$prompt_label [$default_value]: " response
+			if [[ -z "$response" ]]; then
+				response="$default_value"
+			fi
+		else
+			read -r -p "$prompt_label: " response
+		fi
+
+		if [[ -n "$response" || "$allow_empty" == "yes" ]]; then
+			echo "$response"
+			return 0
+		fi
+		done
+}
+resolve_server_reference(){
+	lookup="$1"
+
+	if [[ "$lookup" =~ ^[0-9]+$ ]]; then
+		if (( lookup >= 0 && lookup <= LIMIT )); then
+			echo "$lookup"
+			return 0
+		fi
+		return 1
+	fi
+
+	find_server_index_by_name "$lookup"
 }
 build_servers_from_entries(){
 	SRVNAME=()
@@ -116,11 +158,6 @@ build_aliases_from_entries(){
 	done
 }
 validate_profile(){
-	if (( ${#SRVNAME[@]} == 0 || ${#SRVHOST[@]} == 0 || ${#SRVPORT[@]} == 0 )); then
-		echo -e "${RED}Profile error:${NC} server arrays cannot be empty."
-		exit 1
-	fi
-
 	if (( ${#SRVNAME[@]} != ${#SRVHOST[@]} || ${#SRVNAME[@]} != ${#SRVUSER[@]} || ${#SRVNAME[@]} != ${#SRVPORT[@]} )); then
 		echo -e "${RED}Profile error:${NC} SRVNAME, SRVHOST, SRVUSER, SRVPORT must have matching lengths."
 		exit 1
@@ -133,6 +170,7 @@ validate_profile(){
 }
 load_profile(){
 	if [[ -f "$PROFILE_FILE" ]]; then
+		PROFILE_EXISTS=1
 		# shellcheck source=/dev/null
 		source "$PROFILE_FILE"
 	fi
@@ -148,6 +186,44 @@ load_profile(){
 
 	validate_profile
 	refresh_totals
+}
+save_profile(){
+	profile_dir="$(dirname "$PROFILE_FILE")"
+	mkdir -p "$profile_dir" || return 1
+	tmp_profile="$(mktemp)" || return 1
+
+	{
+		echo "# Bifrost profile"
+		echo "# Managed by bifrost."
+		echo "# SERVER_ENTRIES format: name|host|user|port"
+		echo "# ALIAS_ENTRIES format: alias|server-name"
+		echo ""
+		echo "SERVER_ENTRIES=("
+		for (( i=0; i<${#SRVNAME[@]}; i++ )); do
+			printf '\t"%s|%s|%s|%s"\n' "${SRVNAME[$i]}" "${SRVHOST[$i]}" "${SRVUSER[$i]}" "${SRVPORT[$i]}"
+		done
+		echo ")"
+		echo ""
+		echo "ALIAS_ENTRIES=("
+		for (( i=0; i<${#ALIAS_NAME[@]}; i++ )); do
+			target_idx="${ALIAS_TARGET[$i]}"
+			if (( target_idx >= 0 && target_idx < ${#SRVNAME[@]} )); then
+				printf '\t"%s|%s"\n' "${ALIAS_NAME[$i]}" "${SRVNAME[$target_idx]}"
+			fi
+		done
+		echo ")"
+	} > "$tmp_profile" || {
+		rm -f "$tmp_profile"
+		return 1
+	}
+
+	mv "$tmp_profile" "$PROFILE_FILE" || {
+		rm -f "$tmp_profile"
+		return 1
+	}
+
+	PROFILE_EXISTS=1
+	return 0
 }
 write_default_profile(){
 	profile_dir="$(dirname "$PROFILE_FILE")"
@@ -392,6 +468,10 @@ program_usage(){
 	echo "Usage:"
 	echo "  bifrost                      Interactive menu"
 	echo "  bifrost <target>             Connect by index, alias, or server name/prefix"
+	echo "  bifrost add <name> <host> [user] [port]"
+	echo "  bifrost remove <name|index>"
+	echo "  bifrost alias add <alias> <server-name|index>"
+	echo "  bifrost alias remove <alias>"
 	echo "  bifrost list                 List servers and aliases"
 	echo "  bifrost check-update         Check GitHub for a newer release"
 	echo "  bifrost install              Install to $INSTALL_PATH and create profile"
@@ -404,9 +484,13 @@ program_usage(){
 }
 list_targets(){
 	echo "Servers:"
+	if (( TOTAL == 0 )); then
+		echo "  (none)"
+	else
 	for (( i=0; i<=LIMIT; i++ )); do
 		printf "  %s) %s [%s:%s]\n" "$i" "${SRVNAME[$i]}" "${SRVHOST[$i]}" "${SRVPORT[$i]}"
 	done
+	fi
 
 	echo ""
 	echo "Aliases:"
@@ -440,6 +524,186 @@ install_bifrost(){
 }
 update_bifrost(){
 	update_from_github || exit 1
+}
+add_server(){
+	name="$1"
+	host="$2"
+	user="$3"
+	port="${4:-22}"
+
+	if [[ -z "$name" ]]; then
+		name="$(prompt_value "Server name" "" "no")"
+	fi
+	if [[ -z "$host" ]]; then
+		host="$(prompt_value "Server host" "" "no")"
+	fi
+	if [[ -z "$3" ]]; then
+		user="$(prompt_value "SSH user (optional)" "$user" "yes")"
+	fi
+	if [[ -z "$4" ]]; then
+		port="$(prompt_value "SSH port" "$port" "no")"
+	fi
+
+	if [[ "$name" == *"|"* || "$host" == *"|"* || "$user" == *"|"* || "$port" == *"|"* ]]; then
+		echo -e "${RED}Add failed:${NC} values cannot contain '|'."
+		exit 1
+	fi
+
+	if [[ ! "$port" =~ ^[0-9]+$ ]]; then
+		echo -e "${RED}Add failed:${NC} port must be numeric."
+		exit 1
+	fi
+
+	if find_server_index_by_name "$name" >/dev/null 2>&1; then
+		echo -e "${RED}Add failed:${NC} server '$name' already exists."
+		exit 1
+	fi
+
+	if (( PROFILE_EXISTS == 0 )); then
+		SRVNAME=()
+		SRVHOST=()
+		SRVUSER=()
+		SRVPORT=()
+		ALIAS_NAME=()
+		ALIAS_TARGET=()
+	fi
+
+	SRVNAME+=("$name")
+	SRVHOST+=("$host")
+	SRVUSER+=("$user")
+	SRVPORT+=("$port")
+	refresh_totals
+	save_profile || {
+		echo -e "${RED}Add failed:${NC} unable to write $PROFILE_FILE"
+		exit 1
+	}
+
+	echo "Added server '$name' to $PROFILE_FILE"
+}
+remove_server(){
+	lookup="$1"
+
+	if [[ -z "$lookup" ]]; then
+		echo -e "${RED}Remove failed:${NC} provide a server name or index."
+		echo "Usage: bifrost remove <name|index>"
+		exit 1
+	fi
+
+	if (( PROFILE_EXISTS == 0 )); then
+		echo -e "${RED}Remove failed:${NC} profile file not found at $PROFILE_FILE"
+		exit 1
+	fi
+
+	if [[ "$lookup" =~ ^[0-9]+$ ]]; then
+		index="$lookup"
+		if (( index < 0 || index > LIMIT )); then
+			echo -e "${RED}Remove failed:${NC} index $index is out of range."
+			exit 1
+		fi
+	else
+		index="$(find_server_index_by_name "$lookup")" || {
+			echo -e "${RED}Remove failed:${NC} server '$lookup' not found."
+			exit 1
+		}
+	fi
+
+	removed_name="${SRVNAME[$index]}"
+	unset 'SRVNAME[index]'
+	unset 'SRVHOST[index]'
+	unset 'SRVUSER[index]'
+	unset 'SRVPORT[index]'
+	SRVNAME=("${SRVNAME[@]}")
+	SRVHOST=("${SRVHOST[@]}")
+	SRVUSER=("${SRVUSER[@]}")
+	SRVPORT=("${SRVPORT[@]}")
+
+	updated_alias_names=()
+	updated_alias_targets=()
+	for (( i=0; i<${#ALIAS_NAME[@]}; i++ )); do
+		target_idx="${ALIAS_TARGET[$i]}"
+		if (( target_idx == index )); then
+			continue
+		fi
+		if (( target_idx > index )); then
+			target_idx=$((target_idx - 1))
+		fi
+		updated_alias_names+=("${ALIAS_NAME[$i]}")
+		updated_alias_targets+=("$target_idx")
+	done
+	ALIAS_NAME=("${updated_alias_names[@]}")
+	ALIAS_TARGET=("${updated_alias_targets[@]}")
+
+	refresh_totals
+	save_profile || {
+		echo -e "${RED}Remove failed:${NC} unable to write $PROFILE_FILE"
+		exit 1
+	}
+
+	echo "Removed server '$removed_name' from $PROFILE_FILE"
+}
+add_alias(){
+	alias_name="$1"
+	target_ref="$2"
+
+	if (( TOTAL == 0 )); then
+		echo -e "${RED}Alias add failed:${NC} add a server before creating aliases."
+		exit 1
+	fi
+
+	if [[ -z "$alias_name" ]]; then
+		alias_name="$(prompt_value "Alias name" "" "no")"
+	fi
+	if [[ -z "$target_ref" ]]; then
+		target_ref="$(prompt_value "Target server name or index" "" "no")"
+	fi
+
+	if [[ "$alias_name" == *"|"* || "$target_ref" == *"|"* ]]; then
+		echo -e "${RED}Alias add failed:${NC} values cannot contain '|'."
+		exit 1
+	fi
+
+	if find_alias_index_by_name "$alias_name" >/dev/null 2>&1; then
+		echo -e "${RED}Alias add failed:${NC} alias '$alias_name' already exists."
+		exit 1
+	fi
+
+	target_idx="$(resolve_server_reference "$target_ref")" || {
+		echo -e "${RED}Alias add failed:${NC} target '$target_ref' not found."
+		exit 1
+	}
+
+	ALIAS_NAME+=("$alias_name")
+	ALIAS_TARGET+=("$target_idx")
+	save_profile || {
+		echo -e "${RED}Alias add failed:${NC} unable to write $PROFILE_FILE"
+		exit 1
+	}
+
+	echo "Added alias '$alias_name' for '${SRVNAME[$target_idx]}' in $PROFILE_FILE"
+}
+remove_alias(){
+	alias_lookup="$1"
+
+	if [[ -z "$alias_lookup" ]]; then
+		alias_lookup="$(prompt_value "Alias name" "" "no")"
+	fi
+
+	alias_idx="$(find_alias_index_by_name "$alias_lookup")" || {
+		echo -e "${RED}Alias remove failed:${NC} alias '$alias_lookup' not found."
+		exit 1
+	}
+
+	removed_alias="${ALIAS_NAME[$alias_idx]}"
+	unset 'ALIAS_NAME[alias_idx]'
+	unset 'ALIAS_TARGET[alias_idx]'
+	ALIAS_NAME=("${ALIAS_NAME[@]}")
+	ALIAS_TARGET=("${ALIAS_TARGET[@]}")
+	save_profile || {
+		echo -e "${RED}Alias remove failed:${NC} unable to write $PROFILE_FILE"
+		exit 1
+	}
+
+	echo "Removed alias '$removed_alias' from $PROFILE_FILE"
 }
 program_header(){
 	echo -e "${BLUE}============================================="
@@ -594,6 +858,35 @@ if [[ -n "$1" ]]; then
 			install_bifrost
 			exit
 			;;
+		add|--add)
+			shift
+			add_server "$1" "$2" "$3" "$4"
+			exit
+			;;
+		remove|rm|--remove)
+			shift
+			remove_server "$1"
+			exit
+			;;
+		alias)
+			shift
+			case "${1,,}" in
+				add)
+					shift
+					add_alias "$1" "$2"
+					exit
+					;;
+				remove|rm)
+					shift
+					remove_alias "$1"
+					exit
+					;;
+				*)
+					echo -e "${RED}Alias command failed:${NC} use 'bifrost alias add <alias> <server-name|index>' or 'bifrost alias remove <alias>'."
+					exit 1
+					;;
+			esac
+			;;
 		update|--update)
 			update_bifrost
 			exit
@@ -621,6 +914,10 @@ if [[ -n "$1" ]]; then
 	echo "Try a number (0-$LIMIT), a full/prefix server name, or aliases like 'dvl' and 'dev'."
 	exit 1
 else
+	if (( TOTAL == 0 )); then
+		echo "No servers configured. Use 'bifrost add <name> <host> [user] [port]' to create one."
+		exit 1
+	fi
 echo -e "There are ${GREEN}$TOTAL${NC} Servers in our Expanded Network"
 echo ""
 server_check
