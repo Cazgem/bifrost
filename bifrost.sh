@@ -2,7 +2,7 @@
 #
 #######################
 #	  DIVISI LABS	  #
-#	Bifrost v 3.6.0	  #
+#	Bifrost v 3.6.1	  #
 #######################
 #
 # This script is used to Connect to Virtual Hosts.
@@ -10,7 +10,7 @@
 # Contribute at https://github.com/Cazgem/bifrost
 #
 ### PARAMETERS ###
-VERSION="3.6.0"
+VERSION="3.6.1"
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
@@ -26,17 +26,9 @@ GITHUB_TOKEN="${BIFROST_GITHUB_TOKEN:-${GITHUB_TOKEN:-}}"
 RELEASE_ASSET_NAME="${BIFROST_RELEASE_ASSET:-bifrost.sh}"
 CHECKSUM_ASSET_NAME="${BIFROST_CHECKSUM_ASSET:-SHA256SUMS}"
 
-# Entry-based defaults (name|host|user|port) make reordering and updates simpler.
-SERVER_ENTRIES=(
-	"example-prod|203.0.113.10|admin|22"
-	"example-dev|198.51.100.20|devuser|22"
-)
-
-# Alias entries use alias|server-name so aliases survive server reorder.
-ALIAS_ENTRIES=(
-	"prod|example-prod"
-	"dev|example-dev"
-)
+# Runtime arrays (populated from profile)
+SERVER_ENTRIES=()
+ALIAS_ENTRIES=()
 
 SRVNAME=()
 SRVHOST=()
@@ -234,11 +226,11 @@ write_default_profile(){
 	fi
 
 	cat > "$PROFILE_FILE" <<'EOF'
-# Bifrost profile
-# Preferred format:
-# SERVER_ENTRIES: name|host|user|port
-# ALIAS_ENTRIES: alias|server-name
-# Keep real infrastructure values in this local file, not in the Git repository.
+# Bifrost profile — stores all user server and alias definitions.
+# Copy this file to ~/.config/bifrost/profile.sh and replace with your real infrastructure.
+#
+# SERVER_ENTRIES format: "name|host|user|port"
+# ALIAS_ENTRIES format: "alias|server-name"
 
 SERVER_ENTRIES=(
 	"example-prod|203.0.113.10|admin|22"
@@ -250,13 +242,8 @@ ALIAS_ENTRIES=(
 	"dev|example-dev"
 )
 
-# Legacy arrays are still supported if you prefer that style:
-# SRVNAME=()
-# SRVHOST=()
-# SRVUSER=()
-# SRVPORT=()
-# ALIAS_NAME=()
-# ALIAS_TARGET=()
+# Tip: Keep real infrastructure credentials and IPs in this local file, not in Git.
+# The bifrost.sh script contains no embedded defaults; it loads everything from here.
 EOF
 }
 run_as_installer(){
@@ -468,6 +455,7 @@ program_usage(){
 	echo "Usage:"
 	echo "  bifrost                      Interactive menu"
 	echo "  bifrost <target>             Connect by index, alias, or server name/prefix"
+	echo "  bifrost version              Show version information"
 	echo "  bifrost add <name> <host> [user] [port]"
 	echo "  bifrost remove <name|index>"
 	echo "  bifrost alias add <alias> <server-name|index>"
@@ -477,10 +465,23 @@ program_usage(){
 	echo "  bifrost install              Install to $INSTALL_PATH and create profile"
 	echo "  bifrost update               Verify and install latest GitHub release"
 	echo "  bifrost help                 Show this help"
+	echo "  bifrost -v|--version         Show version information"
 	echo ""
 	echo "Config:"
 	echo "  Profile file: $PROFILE_FILE"
 	echo "  Override with BIFROST_PROFILE"
+}
+show_version(){
+	echo "Bifrost v$VERSION"
+}
+interactive_help(){
+	echo ""
+	echo "Commands:"
+	echo "  <index|name|alias>  Connect to a server"
+	echo "  h, help             Show this help"
+	echo "  v, version          Show version information"
+	echo "  q, quit             Exit Bifrost"
+	echo ""
 }
 list_targets(){
 	echo "Servers:"
@@ -709,6 +710,7 @@ program_header(){
 	echo -e "${BLUE}============================================="
 echo ""
 	echo -e "     Bifrost Server Connection Utility"
+echo -e "                Version $VERSION"
 echo ""
 	echo -e "=============================================${NC}"
 	echo ""
@@ -846,6 +848,10 @@ if [[ -n "$1" ]]; then
 			program_usage
 			exit
 			;;
+		version|-v|--version)
+			show_version
+			exit
+			;;
 		list|--list)
 			list_targets
 			exit
@@ -922,9 +928,11 @@ echo -e "There are ${GREEN}$TOTAL${NC} Servers in our Expanded Network"
 echo ""
 server_check
 echo ""
+echo "h) Help"
+echo "v) Version"
 echo "q) Quit"
 echo ""
-let LINES=$TOTAL+9
+let LINES=$TOTAL+11
 
 while true; do
 # clear;
@@ -936,6 +944,17 @@ while true; do
 	if [[ "${choice,,}" == "q" || "${choice,,}" == "quit" ]]; then
 		quit
 		exit
+	fi
+
+	if [[ "${choice,,}" == "h" || "${choice,,}" == "help" ]]; then
+		interactive_help
+		continue
+	fi
+
+	if [[ "${choice,,}" == "v" || "${choice,,}" == "version" ]]; then
+		show_version
+		echo ""
+		continue
 	fi
 
 	target="$(resolve_target "$choice")"

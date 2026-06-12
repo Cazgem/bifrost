@@ -1,5 +1,6 @@
-# Bifrost profile example (safe to commit)
-# Copy this file to ~/.config/bifrost/profile.sh and replace values with your real hosts.
+# Bifrost profile — stores all user server and alias definitions.
+# Copy this file to ~/.config/bifrost/profile.sh and replace with your real infrastructure.
+#
 # SERVER_ENTRIES format: "name|host|user|port"
 # ALIAS_ENTRIES format: "alias|server-name"
 
@@ -13,10 +14,5 @@ ALIAS_ENTRIES=(
 	"dev|example-dev"
 )
 
-# Legacy format is still supported by bifrost.sh if needed:
-# SRVNAME=()
-# SRVHOST=()
-# SRVUSER=()
-# SRVPORT=()
-# ALIAS_NAME=()
-# ALIAS_TARGET=()
+# Tip: Keep real infrastructure credentials and IPs in this local file, not in Git.
+# The bifrost.sh script contains no embedded defaults; it loads everything from here.
